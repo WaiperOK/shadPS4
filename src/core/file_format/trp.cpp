@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstring>
+#include <optional>
 #include <system_error>
 
 #include "common/aes.h"
@@ -22,6 +24,25 @@ static void DecryptEFSM(std::span<const u8, 16> trophyKey, std::span<const u8, 1
     // Step 2: Decrypt EFSM
     aes::decrypt_cbc(ciphertext.data(), ciphertext.size(), trpKey.data(), trpKey.size(),
                      const_cast<u8*>(efsmIv.data()), decrypted.data(), decrypted.size(), nullptr);
+}
+
+// Entry names come straight from the file, so they must be a plain file name: no separators,
+// no "." / ".." and no drive prefixes, otherwise they could point outside the output directory.
+static std::optional<std::string> GetSafeEntryName(const TrpEntry& entry) {
+    const size_t len = strnlen(entry.entry_name, sizeof(entry.entry_name));
+    if (len == 0) {
+        return std::nullopt;
+    }
+    std::string name(entry.entry_name, len);
+    if (name == "." || name == ".." || name.find_first_of("/\\:") != std::string::npos) {
+        return std::nullopt;
+    }
+    return name;
+}
+
+// Checks that [pos, pos + len) lies inside the file without overflowing.
+static bool IsRangeInFile(u64 pos, u64 len, u64 file_size) {
+    return pos <= file_size && len <= file_size - pos;
 }
 
 TRP::TRP() = default;
@@ -109,7 +130,13 @@ bool TRP::Extract(const std::filesystem::path& trophyPath, std::string npCommId,
                 break;
             }
 
-            std::string_view name(entry.entry_name);
+            const auto safe_name = GetSafeEntryName(entry);
+            if (!safe_name) {
+                LOG_ERROR(Common_Filesystem, "Invalid TRP entry name, aborting extraction");
+                success = false;
+                break;
+            }
+            const std::string_view name(*safe_name);
 
             if (entry.flag == ENTRY_FLAG_PNG) {
                 if (!ProcessPngEntry(file, entry, outputPath, name)) {
@@ -158,6 +185,10 @@ bool TRP::Extract(const std::filesystem::path& trophyPath, std::string npCommId,
 
 bool TRP::ProcessPngEntry(Common::FS::IOFile& file, const TrpEntry& entry,
                           const std::filesystem::path& outputPath, std::string_view name) {
+    if (!IsRangeInFile(entry.entry_pos, entry.entry_len, file.GetSize())) {
+        LOG_ERROR(Common_Filesystem, "PNG entry {} lies outside of the file", name);
+        return false;
+    }
     if (!file.Seek(entry.entry_pos)) {
         LOG_ERROR(Common_Filesystem, "Failed to seek to PNG entry offset");
         return false;
@@ -186,6 +217,10 @@ bool TRP::ProcessEncryptedXmlEntry(Common::FS::IOFile& file, const TrpEntry& ent
                                    const std::string& npCommId) {
     constexpr size_t IV_LEN = 16;
 
+    if (!IsRangeInFile(entry.entry_pos, entry.entry_len, file.GetSize())) {
+        LOG_ERROR(Common_Filesystem, "Encrypted XML entry {} lies outside of the file", name);
+        return false;
+    }
     if (!file.Seek(entry.entry_pos)) {
         LOG_ERROR(Common_Filesystem, "Failed to seek to encrypted XML entry offset");
         return false;
@@ -231,7 +266,7 @@ bool TRP::ProcessEncryptedXmlEntry(Common::FS::IOFile& file, const TrpEntry& ent
     removePadding(XML);
 
     // Create output filename
-    std::string xml_name(entry.entry_name);
+    std::string xml_name(name);
     size_t pos = xml_name.find("ESFM");
     if (pos != std::string::npos) {
         xml_name.replace(pos, 4, "XML");
