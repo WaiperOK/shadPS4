@@ -116,104 +116,115 @@ void IPC::InputLoop() {
 
     while (true) {
         auto& cmd = next_str();
+        if (!std::cin) {
+            // stdin was closed (the client is gone): stop instead of spinning on empty reads.
+            std::cerr << ";IPC: stdin closed, stopping IPC input thread" << std::endl;
+            return;
+        }
         if (cmd.empty()) {
             continue;
         }
-        if (cmd == "RUN") {
-            run_semaphore.release();
-        } else if (cmd == "START") {
-            start_semaphore.release();
-        } else if (cmd == "PATCH_MEMORY") {
-            const MemoryPatcher::patchInfo entry = {
-                .gameSerial = "*",
-                .modNameStr = next_str(),
-                .offsetStr = next_str(),
-                .valueStr = next_str(),
-                .targetStr = next_str(),
-                .sizeStr = next_str(),
-                .isOffset = next_u64() != 0,
-                .littleEndian = next_u64() != 0,
-                .patchMask = static_cast<MemoryPatcher::PatchMask>(next_u64()),
-                .maskOffset = static_cast<int>(next_u64()),
-            };
-            MemoryPatcher::AddPatchToQueue(entry);
-        } else if (cmd == "PAUSE") {
-            DebugState.PauseGuestThreads();
-        } else if (cmd == "RESUME") {
-            DebugState.ResumeGuestThreads();
-        } else if (cmd == "STOP") {
-            SDL_Event event;
-            SDL_memset(&event, 0, sizeof(event));
-            event.type = SDL_EVENT_QUIT;
-            SDL_PushEvent(&event);
-        } else if (cmd == "TOGGLE_FULLSCREEN") {
-            SDL_Event event;
-            SDL_memset(&event, 0, sizeof(event));
-            event.type = SDL_EVENT_TOGGLE_FULLSCREEN;
-            SDL_PushEvent(&event);
-        } else if (cmd == "ADJUST_VOLUME") {
-            int value = static_cast<int>(next_u64());
-            bool is_game_specific = next_u64() != 0;
-            EmulatorSettings.SetVolumeSlider(value, is_game_specific);
-            Libraries::AudioOut::AdjustVol();
-        } else if (cmd == "SET_FSR") {
-            bool use_fsr = next_u64() != 0;
-            if (presenter) {
-                presenter->GetFsrSettingsRef().enable = use_fsr;
+        // A malformed number must not take the whole emulator down: std::stoull throws, and an
+        // exception escaping this thread would call std::terminate.
+        try {
+            if (cmd == "RUN") {
+                run_semaphore.release();
+            } else if (cmd == "START") {
+                start_semaphore.release();
+            } else if (cmd == "PATCH_MEMORY") {
+                const MemoryPatcher::patchInfo entry = {
+                    .gameSerial = "*",
+                    .modNameStr = next_str(),
+                    .offsetStr = next_str(),
+                    .valueStr = next_str(),
+                    .targetStr = next_str(),
+                    .sizeStr = next_str(),
+                    .isOffset = next_u64() != 0,
+                    .littleEndian = next_u64() != 0,
+                    .patchMask = static_cast<MemoryPatcher::PatchMask>(next_u64()),
+                    .maskOffset = static_cast<int>(next_u64()),
+                };
+                MemoryPatcher::AddPatchToQueue(entry);
+            } else if (cmd == "PAUSE") {
+                DebugState.PauseGuestThreads();
+            } else if (cmd == "RESUME") {
+                DebugState.ResumeGuestThreads();
+            } else if (cmd == "STOP") {
+                SDL_Event event;
+                SDL_memset(&event, 0, sizeof(event));
+                event.type = SDL_EVENT_QUIT;
+                SDL_PushEvent(&event);
+            } else if (cmd == "TOGGLE_FULLSCREEN") {
+                SDL_Event event;
+                SDL_memset(&event, 0, sizeof(event));
+                event.type = SDL_EVENT_TOGGLE_FULLSCREEN;
+                SDL_PushEvent(&event);
+            } else if (cmd == "ADJUST_VOLUME") {
+                int value = static_cast<int>(next_u64());
+                bool is_game_specific = next_u64() != 0;
+                EmulatorSettings.SetVolumeSlider(value, is_game_specific);
+                Libraries::AudioOut::AdjustVol();
+            } else if (cmd == "SET_FSR") {
+                bool use_fsr = next_u64() != 0;
+                if (presenter) {
+                    presenter->GetFsrSettingsRef().enable = use_fsr;
+                }
+            } else if (cmd == "SET_RCAS") {
+                bool use_rcas = next_u64() != 0;
+                if (presenter) {
+                    presenter->GetFsrSettingsRef().use_rcas = use_rcas;
+                }
+            } else if (cmd == "SET_RCAS_ATTENUATION") {
+                int value = static_cast<int>(next_u64());
+                if (presenter) {
+                    presenter->GetFsrSettingsRef().rcas_attenuation =
+                        static_cast<float>(value / 1000.0f);
+                }
+            } else if (cmd == "USB_LOAD_FIGURE") {
+                const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
+                if (ref) {
+                    std::string file_name = next_str();
+                    const u8 pad = next_u64();
+                    const u8 slot = next_u64();
+                    ref->LoadFigure(file_name, pad, slot);
+                }
+            } else if (cmd == "USB_REMOVE_FIGURE") {
+                const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
+                if (ref) {
+                    const u8 pad = next_u64();
+                    const u8 slot = next_u64();
+                    bool full_remove = next_u64() != 0;
+                    ref->RemoveFigure(pad, slot, full_remove);
+                }
+            } else if (cmd == "USB_MOVE_FIGURE") {
+                const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
+                if (ref) {
+                    const u8 new_pad = next_u64();
+                    const u8 new_index = next_u64();
+                    const u8 old_pad = next_u64();
+                    const u8 old_index = next_u64();
+                    ref->MoveFigure(new_pad, new_index, old_pad, old_index);
+                }
+            } else if (cmd == "USB_TEMP_REMOVE_FIGURE") {
+                const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
+                if (ref) {
+                    const u8 index = next_u64();
+                    ref->TempRemoveFigure(index);
+                }
+            } else if (cmd == "USB_CANCEL_REMOVE_FIGURE") {
+                const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
+                if (ref) {
+                    const u8 index = next_u64();
+                    ref->CancelRemoveFigure(index);
+                }
+            } else if (cmd == "RELOAD_INPUTS") {
+                std::string config = next_str();
+                Input::ParseInputConfig(config);
+            } else {
+                std::cerr << ";UNKNOWN CMD: " << cmd << std::endl;
             }
-        } else if (cmd == "SET_RCAS") {
-            bool use_rcas = next_u64() != 0;
-            if (presenter) {
-                presenter->GetFsrSettingsRef().use_rcas = use_rcas;
-            }
-        } else if (cmd == "SET_RCAS_ATTENUATION") {
-            int value = static_cast<int>(next_u64());
-            if (presenter) {
-                presenter->GetFsrSettingsRef().rcas_attenuation =
-                    static_cast<float>(value / 1000.0f);
-            }
-        } else if (cmd == "USB_LOAD_FIGURE") {
-            const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
-            if (ref) {
-                std::string file_name = next_str();
-                const u8 pad = next_u64();
-                const u8 slot = next_u64();
-                ref->LoadFigure(file_name, pad, slot);
-            }
-        } else if (cmd == "USB_REMOVE_FIGURE") {
-            const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
-            if (ref) {
-                const u8 pad = next_u64();
-                const u8 slot = next_u64();
-                bool full_remove = next_u64() != 0;
-                ref->RemoveFigure(pad, slot, full_remove);
-            }
-        } else if (cmd == "USB_MOVE_FIGURE") {
-            const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
-            if (ref) {
-                const u8 new_pad = next_u64();
-                const u8 new_index = next_u64();
-                const u8 old_pad = next_u64();
-                const u8 old_index = next_u64();
-                ref->MoveFigure(new_pad, new_index, old_pad, old_index);
-            }
-        } else if (cmd == "USB_TEMP_REMOVE_FIGURE") {
-            const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
-            if (ref) {
-                const u8 index = next_u64();
-                ref->TempRemoveFigure(index);
-            }
-        } else if (cmd == "USB_CANCEL_REMOVE_FIGURE") {
-            const auto ref = Libraries::Usbd::usb_backend->GetImplRef();
-            if (ref) {
-                const u8 index = next_u64();
-                ref->CancelRemoveFigure(index);
-            }
-        } else if (cmd == "RELOAD_INPUTS") {
-            std::string config = next_str();
-            Input::ParseInputConfig(config);
-        } else {
-            std::cerr << ";UNKNOWN CMD: " << cmd << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << ";IPC: invalid command arguments: " << e.what() << std::endl;
         }
     }
 }

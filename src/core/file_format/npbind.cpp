@@ -40,6 +40,10 @@ bool NPBindFile::Load(std::span<const u8> data) {
     // offset start of bodies
     size_t offset = sizeof(NpBindHeader);
 
+    // Every body holds at least 4 entry headers (4 bytes each), so a larger count cannot be valid.
+    // This also keeps a crafted header from requesting a huge allocation.
+    if (m_header.num_entries > (size - offset) / 16)
+        return false;
     m_bodies.reserve(static_cast<size_t>(m_header.num_entries));
 
     // For each body: read 4 TLV entries then skip padding (0x98 = 152 bytes)

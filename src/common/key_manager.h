@@ -48,6 +48,7 @@ public:
     }
     void SetAllKeys(const AllKeys& keys) {
         m_keys = keys;
+        m_load_failed = false;
     }
 
     static std::vector<u8> HexStringToBytes(const std::string& hexStr);
@@ -58,6 +59,9 @@ private:
     void JsonToKeys(const json& j);
 
     AllKeys m_keys{};
+    // Set when keys.json existed but could not be read. Saving is blocked until the keys are
+    // replaced explicitly, so a transient parse error cannot overwrite the user's keys.
+    bool m_load_failed{false};
 
     static std::shared_ptr<KeyManager> s_instance;
     static std::mutex s_mutex;

@@ -1,6 +1,7 @@
 ﻿// SPDX-FileCopyrightText: Copyright 2025-2026 shadLauncher4 Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -84,6 +85,7 @@ bool KeyManager::LoadFromFile() {
         std::ifstream file(keysPath);
         if (!file.is_open()) {
             LOG_ERROR(KeyManager, "Could not open key file: {}", keysPath.string());
+            m_load_failed = true;
             return false;
         }
 
@@ -108,6 +110,7 @@ bool KeyManager::LoadFromFile() {
     } catch (const std::exception& e) {
         LOG_ERROR(KeyManager, "Error loading keys, using defaults: {}", e.what());
         SetDefaultKeys();
+        m_load_failed = true;
         return false;
     }
 }
@@ -117,20 +120,49 @@ bool KeyManager::SaveToFile() {
         const auto userDir = Common::FS::GetUserPath(Common::FS::PathType::UserDir);
         const auto keysPath = userDir / "keys.json";
 
-        json j;
-        KeysToJson(j);
-
-        std::ofstream file(keysPath);
-        if (!file.is_open()) {
-            LOG_ERROR(KeyManager, "Could not open key file for writing: {}", keysPath.string());
+        if (m_load_failed) {
+            LOG_ERROR(KeyManager,
+                      "Not saving keys: {} could not be loaded and would be overwritten",
+                      keysPath.string());
             return false;
         }
 
-        file << std::setw(4) << j;
-        file.flush();
+        json j;
+        KeysToJson(j);
 
-        if (file.fail()) {
-            LOG_ERROR(KeyManager, "Failed to write keys to: {}", keysPath.string());
+        // Write to a temporary file first so a failed write cannot corrupt the existing keys.
+        auto tmpPath = keysPath;
+        tmpPath += ".tmp";
+        {
+            std::ofstream file(tmpPath, std::ios::trunc);
+            if (!file.is_open()) {
+                LOG_ERROR(KeyManager, "Could not open key file for writing: {}", tmpPath.string());
+                return false;
+            }
+
+            // The file holds secrets: keep it readable by the owner only (no-op on Windows).
+            std::error_code perm_ec;
+            std::filesystem::permissions(
+                tmpPath, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                std::filesystem::perm_options::replace, perm_ec);
+
+            file << std::setw(4) << j;
+            file.flush();
+
+            if (file.fail()) {
+                LOG_ERROR(KeyManager, "Failed to write keys to: {}", tmpPath.string());
+                file.close();
+                std::filesystem::remove(tmpPath, perm_ec);
+                return false;
+            }
+        }
+
+        std::error_code rename_ec;
+        std::filesystem::rename(tmpPath, keysPath, rename_ec);
+        if (rename_ec) {
+            LOG_ERROR(KeyManager, "Failed to replace {}: {}", keysPath.string(),
+                      rename_ec.message());
+            std::filesystem::remove(tmpPath, rename_ec);
             return false;
         }
         return true;

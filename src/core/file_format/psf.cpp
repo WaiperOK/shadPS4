@@ -38,10 +38,16 @@ bool PSF::Open(const std::filesystem::path& filepath) {
     }
 
     const u64 psfSize = file.GetSize();
-    ASSERT_MSG(psfSize != 0, "SFO file at {} is empty!", filepath.string());
+    if (psfSize == 0) {
+        LOG_ERROR(Core, "SFO file at {} is empty!", filepath.string());
+        return false;
+    }
     std::vector<u8> psf(psfSize);
     file.Seek(0);
-    file.Read(psf);
+    if (file.Read(psf) != psf.size()) {
+        LOG_ERROR(Core, "Failed to read SFO file at {}", filepath.string());
+        return false;
+    }
     file.Close();
     return Open(psf);
 }
@@ -56,11 +62,26 @@ bool PSF::Open(const std::unique_ptr<Core::FileSys::IFile>& file) {
 
 bool PSF::Open(const std::vector<u8>& psf_buffer) {
     const u8* psf_data = psf_buffer.data();
+    const u64 psf_size = psf_buffer.size();
 
     entry_list.clear();
     map_binaries.clear();
     map_strings.clear();
     map_integers.clear();
+
+    // The buffer comes from a file, so every offset and length in it is untrusted.
+    const auto fail = [this](const char* reason) {
+        LOG_ERROR(Core, "Invalid PSF file: {}", reason);
+        entry_list.clear();
+        map_binaries.clear();
+        map_strings.clear();
+        map_integers.clear();
+        return false;
+    };
+
+    if (psf_size < sizeof(PSFHeader)) {
+        return fail("file is too small");
+    }
 
     // Parse file contents
     PSFHeader header{};
@@ -75,35 +96,68 @@ bool PSF::Open(const std::vector<u8>& psf_buffer) {
         return false;
     }
 
+    const u64 key_table_offset = header.key_table_offset;
+    const u64 data_table_offset = header.data_table_offset;
+    const u64 index_end =
+        sizeof(PSFHeader) + static_cast<u64>(header.index_table_entries) * sizeof(PSFRawEntry);
+    if (index_end > psf_size) {
+        return fail("index table is out of bounds");
+    }
+    if (key_table_offset > psf_size || data_table_offset > psf_size) {
+        return fail("key or data table is out of bounds");
+    }
+
     for (u32 i = 0; i < header.index_table_entries; i++) {
         PSFRawEntry raw_entry{};
         std::memcpy(&raw_entry, psf_data + sizeof(PSFHeader) + i * sizeof(PSFRawEntry),
                     sizeof(raw_entry));
 
+        const u64 key_pos = key_table_offset + raw_entry.key_offset;
+        if (key_pos >= psf_size) {
+            return fail("key offset is out of bounds");
+        }
+        const u8* key_begin = psf_data + key_pos;
+        const auto* key_end = static_cast<const u8*>(std::memchr(key_begin, 0, psf_size - key_pos));
+        if (!key_end) {
+            return fail("key is not null terminated");
+        }
+
         Entry& entry = entry_list.emplace_back();
-        entry.key = std::string{(char*)(psf_data + header.key_table_offset + raw_entry.key_offset)};
+        entry.key = std::string{reinterpret_cast<const char*>(key_begin),
+                                static_cast<size_t>(key_end - key_begin)};
         entry.param_fmt = static_cast<PSFEntryFmt>(raw_entry.param_fmt.Raw());
         entry.max_len = raw_entry.param_max_len;
 
-        const u8* data = psf_data + header.data_table_offset + raw_entry.data_offset;
+        const u64 data_pos = data_table_offset + raw_entry.data_offset;
+        if (data_pos > psf_size) {
+            return fail("data offset is out of bounds");
+        }
+        const u64 data_avail = psf_size - data_pos;
+        const u8* data = psf_data + data_pos;
 
         switch (entry.param_fmt) {
         case PSFEntryFmt::Binary: {
-            std::vector<u8> value(raw_entry.param_len);
-            std::memcpy(value.data(), data, raw_entry.param_len);
+            if (raw_entry.param_len > data_avail) {
+                return fail("binary entry is out of bounds");
+            }
+            std::vector<u8> value(data, data + raw_entry.param_len);
             map_binaries.emplace(i, std::move(value));
         } break;
         case PSFEntryFmt::Text: {
-            std::string c_str{reinterpret_cast<const char*>(data)};
-            map_strings.emplace(i, std::move(c_str));
+            // Strings are NULL terminated, but never read past the end of the buffer.
+            const size_t len = strnlen(reinterpret_cast<const char*>(data), data_avail);
+            map_strings.emplace(i, std::string{reinterpret_cast<const char*>(data), len});
         } break;
         case PSFEntryFmt::Integer: {
-            ASSERT_MSG(raw_entry.param_len == sizeof(s32), "PSF integer entry size mismatch");
-            s32 integer = *(s32*)data;
+            if (raw_entry.param_len != sizeof(s32) || data_avail < sizeof(s32)) {
+                return fail("integer entry has an invalid size");
+            }
+            s32 integer;
+            std::memcpy(&integer, data, sizeof(integer));
             map_integers.emplace(i, integer);
         } break;
         default:
-            UNREACHABLE_MSG("Unknown PSF entry format");
+            return fail("unknown entry format");
         }
     }
     return true;
@@ -202,7 +256,9 @@ std::optional<std::span<const u8>> PSF::GetBinary(std::string_view key) const {
     if (it == entry_list.end()) {
         return {};
     }
-    ASSERT(it->param_fmt == PSFEntryFmt::Binary);
+    if (it->param_fmt != PSFEntryFmt::Binary) {
+        return {};
+    }
     return std::span{map_binaries.at(index)};
 }
 
@@ -211,7 +267,9 @@ std::optional<std::string_view> PSF::GetString(std::string_view key) const {
     if (it == entry_list.end()) {
         return {};
     }
-    ASSERT(it->param_fmt == PSFEntryFmt::Text);
+    if (it->param_fmt != PSFEntryFmt::Text) {
+        return {};
+    }
     return std::string_view{map_strings.at(index)};
 }
 
@@ -220,7 +278,9 @@ std::optional<s32> PSF::GetInteger(std::string_view key) const {
     if (it == entry_list.end()) {
         return {};
     }
-    ASSERT(it->param_fmt == PSFEntryFmt::Integer);
+    if (it->param_fmt != PSFEntryFmt::Integer) {
+        return {};
+    }
     return map_integers.at(index);
 }
 
