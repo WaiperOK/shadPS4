@@ -47,6 +47,63 @@ std::string RemoveTrailingSlashes(const std::string& path) {
     return path_sanitized;
 }
 
+// Normalize a guest path: collapse repeated slashes (evil games like Turok2 pass /app0//game.kpf)
+// and resolve "." / ".." components lexically. Paths that try to climb above the root are
+// rejected, so a guest can never address anything outside of the mount it is using.
+std::optional<std::string> SanitizeGuestPath(std::string_view path) {
+    if (path.length() > 255) {
+        return std::nullopt;
+    }
+    std::vector<std::string_view> parts;
+    size_t start = 0;
+    while (start <= path.size()) {
+        size_t end = path.find('/', start);
+        if (end == std::string_view::npos) {
+            end = path.size();
+        }
+        const std::string_view part = path.substr(start, end - start);
+        start = end + 1;
+        if (part.empty() || part == ".") {
+            continue;
+        }
+        if (part == "..") {
+            if (parts.empty()) {
+                return std::nullopt;
+            }
+            parts.pop_back();
+            continue;
+        }
+        // NUL truncates host paths, and on Windows backslashes and drive letters are treated
+        // as path separators / roots by std::filesystem, which would bypass the checks above.
+        if (part.find('\0') != std::string_view::npos) {
+            return std::nullopt;
+        }
+#ifdef _WIN32
+        if (part.find_first_of("\\:") != std::string_view::npos) {
+            return std::nullopt;
+        }
+#endif
+        parts.push_back(part);
+    }
+
+    std::string corrected;
+    corrected.reserve(path.size());
+    const bool absolute = path.starts_with('/');
+    for (const auto part : parts) {
+        if (absolute || !corrected.empty()) {
+            corrected += '/';
+        }
+        corrected += part;
+    }
+    if (corrected.empty() && absolute) {
+        corrected = "/";
+    }
+    if (!parts.empty() && path.ends_with('/')) {
+        corrected += '/';
+    }
+    return corrected;
+}
+
 std::filesystem::path OverlayPath(const std::filesystem::path& base, std::string_view suffix) {
     std::filesystem::path result = base;
     if (result.extension() == ".zar") {
@@ -160,16 +217,11 @@ void MntPoints::UnmountAll() {
 
 std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_read_only,
                                              HostPathType path_type) {
-    // Evil games like Turok2 pass double slashes e.g /app0//game.kpf
-    std::string corrected_path(path);
-    size_t pos = corrected_path.find("//");
-    while (pos != std::string::npos) {
-        corrected_path.replace(pos, 2, "/");
-        pos = corrected_path.find("//", pos + 1);
-    }
-
-    if (path.length() > 255)
+    const auto sanitized = SanitizeGuestPath(path);
+    if (!sanitized) {
         return "";
+    }
+    const std::string& corrected_path = *sanitized;
 
     const auto* mount = GetMount(corrected_path);
     if (!mount) {
@@ -315,20 +367,6 @@ std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_rea
     // Opening the guest path will surely fail but at least gives
     // a better error message than the empty path.
     return host_path;
-}
-
-// Normalize a guest path
-std::optional<std::string> SanitizeGuestPath(std::string_view path) {
-    if (path.length() > 255) {
-        return std::nullopt;
-    }
-    std::string corrected(path);
-    size_t pos = corrected.find("//");
-    while (pos != std::string::npos) {
-        corrected.replace(pos, 2, "/");
-        pos = corrected.find("//", pos + 1);
-    }
-    return corrected;
 }
 
 // Strip the mount prefix from a corrected guest path
