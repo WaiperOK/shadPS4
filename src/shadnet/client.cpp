@@ -47,13 +47,16 @@ static std::vector<u8> MakeProtoPayload(const T& msg) {
 // Read a u32-LE-prefixed proto blob starting at pos in p.
 // Returns the raw bytes ready for ParseFromString.
 std::string ShadNetClient::ExtractBlob(const std::vector<u8>& p, int pos) {
-    if (pos + 4 > static_cast<int>(p.size()))
+    // The length comes from the server, so do all the arithmetic on size_t: a u32 length cast to
+    // int would turn negative above 2 GiB and slip past the bounds check.
+    if (pos < 0 || static_cast<size_t>(pos) > p.size() || p.size() - static_cast<size_t>(pos) < 4)
         return {};
-    const u32 len = GetLE32(p.data() + pos);
-    pos += 4;
-    if (pos + static_cast<int>(len) > static_cast<int>(p.size()))
+    const size_t start = static_cast<size_t>(pos);
+    const u32 len = GetLE32(p.data() + start);
+    const size_t data_start = start + 4;
+    if (len > p.size() - data_start)
         return {};
-    return std::string(reinterpret_cast<const char*>(p.data() + pos), len);
+    return std::string(reinterpret_cast<const char*>(p.data() + data_start), len);
 }
 
 ShadNetClient::ShadNetClient() {
@@ -397,6 +400,12 @@ bool ShadNetClient::DoConnect() {
         return false;
     }
     const u32 total_sz = GetLE32(hdr + 3);
+    if (total_sz > SHAD_MAX_PACKET_SIZE) {
+        LOG_ERROR(ShadNet, "ServerInfo packet too large (total_sz={})", total_sz);
+        DoDisconnect();
+        m_state = ShadNetState::FailureServerInfo;
+        return false;
+    }
     const u32 payload_sz = (total_sz > SHAD_HEADER_SIZE) ? total_sz - SHAD_HEADER_SIZE : 0;
     std::vector<u8> si_payload(payload_sz);
     if (payload_sz > 0 && !RecvN(si_payload.data(), payload_sz)) {
