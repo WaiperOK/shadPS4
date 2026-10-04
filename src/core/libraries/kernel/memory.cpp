@@ -197,6 +197,10 @@ s32 PS4_SYSV_ABI sceKernelReserveVirtualRange(void** addr, u64 len, s32 flags, u
 
 s32 PS4_SYSV_ABI sceKernelMapNamedDirectMemory(void** addr, u64 len, s32 prot, s32 flags,
                                                s64 phys_addr, u64 alignment, const char* name) {
+    if (addr == nullptr || name == nullptr) {
+        LOG_ERROR(Kernel_Vmm, "addr or name is null!");
+        return ORBIS_KERNEL_ERROR_EFAULT;
+    }
     LOG_INFO(Kernel_Vmm,
              "in_addr = {}, len = {:#x}, prot = {:#x}, flags = {:#x}, "
              "phys_addr = {:#x}, alignment = {:#x}, name = '{}'",
@@ -312,8 +316,12 @@ s32 PS4_SYSV_ABI sceKernelMapDirectMemory2(void** addr, u64 len, s32 type, s32 p
 
 s32 PS4_SYSV_ABI sceKernelMapNamedFlexibleMemory(void** addr_in_out, u64 len, s32 prot, s32 flags,
                                                  const char* name) {
+    if (addr_in_out == nullptr) {
+        LOG_ERROR(Kernel_Vmm, "addr is null!");
+        return ORBIS_KERNEL_ERROR_EFAULT;
+    }
     LOG_INFO(Kernel_Vmm, "in_addr = {}, len = {:#x}, prot = {:#x}, flags = {:#x}, name = '{}'",
-             fmt::ptr(*addr_in_out), len, prot, flags, name);
+             fmt::ptr(*addr_in_out), len, prot, flags, name ? name : "(null)");
     if (len == 0 || !Common::Is16KBAligned(len)) {
         LOG_ERROR(Kernel_Vmm, "len is 0 or not 16kb multiple");
         return ORBIS_KERNEL_ERROR_EINVAL;

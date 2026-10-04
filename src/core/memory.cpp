@@ -282,7 +282,8 @@ PAddr MemoryManager::Allocate(PAddr search_start, PAddr search_end, u64 size, u6
 
 s32 MemoryManager::Free(PAddr phys_addr, u64 size, bool is_checked) {
     // Basic bounds checking
-    if (phys_addr > total_direct_size || (is_checked && phys_addr + size > total_direct_size)) {
+    // Compare with a subtraction: phys_addr + size can wrap around for a guest supplied size.
+    if (phys_addr > total_direct_size || (is_checked && size > total_direct_size - phys_addr)) {
         LOG_ERROR(Kernel_Vmm, "phys_addr {:#x}, size {:#x} goes outside dmem map", phys_addr, size);
         if (is_checked) {
             return ORBIS_KERNEL_ERROR_ENOENT;
@@ -515,7 +516,8 @@ s32 MemoryManager::MapMemory(void** out_addr, VAddr virtual_addr, u64 size, Memo
                              bool validate_dmem, PAddr phys_addr, u64 alignment) {
     // Certain games perform flexible mappings on loop to determine
     // the available flexible memory size. Questionable but we need to handle this.
-    if (type == VMAType::Flexible && flexible_usage + size > total_flexible_size) {
+    if (type == VMAType::Flexible &&
+        (flexible_usage > total_flexible_size || size > total_flexible_size - flexible_usage)) {
         LOG_ERROR(Kernel_Vmm,
                   "Out of flexible memory, available flexible memory = {:#x}"
                   " requested size = {:#x}",
@@ -527,7 +529,7 @@ s32 MemoryManager::MapMemory(void** out_addr, VAddr virtual_addr, u64 size, Memo
     PhysHandle dmem_area;
     // Validate the requested physical address range
     if (phys_addr != -1) {
-        if (total_direct_size < phys_addr + size) {
+        if (phys_addr > total_direct_size || size > total_direct_size - phys_addr) {
             LOG_ERROR(Kernel_Vmm, "Unable to map {:#x} bytes at physical address {:#x}", size,
                       phys_addr);
             return ORBIS_KERNEL_ERROR_ENOMEM;
@@ -915,7 +917,14 @@ s32 MemoryManager::UnmapMemory(VAddr virtual_addr, u64 size) {
     std::scoped_lock lk{unmap_mutex};
     // Align address and size appropriately
     virtual_addr = Common::AlignDown(virtual_addr, 16_KB);
-    size = Common::AlignUp(size, 16_KB);
+    const u64 aligned_size = Common::AlignUp(size, 16_KB);
+    // Aligning a size close to 2^64 up wraps to a small value (or zero), which would turn a bogus
+    // request into a valid-looking one.
+    if (aligned_size < size) {
+        LOG_ERROR(Kernel_Vmm, "size = {:#x} is too large", size);
+        return ORBIS_KERNEL_ERROR_EINVAL;
+    }
+    size = aligned_size;
     if (!IsValidMapping(virtual_addr, size)) {
         LOG_ERROR(Kernel_Vmm, "addr = {:#x} size = {:#x} is outside the memory map", virtual_addr,
                   size);
