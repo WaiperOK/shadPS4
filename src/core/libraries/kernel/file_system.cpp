@@ -77,7 +77,23 @@ static std::map<std::string, FactoryDevice> available_device = {
 
 namespace Libraries::Kernel {
 
+// Validates a guest supplied path pointer before it is dereferenced or formatted.
+// Returns 0 when the path is usable, otherwise the POSIX errno to report.
+static s32 CheckGuestPath(const char* path) {
+    if (path == nullptr) {
+        return POSIX_EFAULT;
+    }
+    if (strnlen(path, 256) > 255) {
+        return POSIX_ENAMETOOLONG;
+    }
+    return 0;
+}
+
 s32 PS4_SYSV_ABI open(const char* raw_path, s32 flags, u16 mode) {
+    if (const s32 err = CheckGuestPath(raw_path)) {
+        *__Error() = err;
+        return -1;
+    }
     LOG_INFO(Kernel_Fs, "path = {} flags = {:#x} mode = {:#o}", raw_path, flags, mode);
 
     auto* h = Common::Singleton<Core::FileSys::HandleTable>::Instance();
@@ -348,11 +364,18 @@ static thread_local std::vector<u8> file_buf{};
 
 s64 ReadFile(Core::FileSys::File* file, void* buf, u64 nbytes) {
     const auto* memory = Core::Memory::Instance();
-    // Invalidate up to the actual number of bytes that could be read.
-    const auto remaining = file->GetSize() - file->Tell();
-    memory->InvalidateMemory(reinterpret_cast<VAddr>(buf), std::min<u64>(nbytes, remaining));
-    if (file_buf.capacity() < nbytes) {
-        file_buf.reserve(nbytes);
+    // Never read more than what is left in the file: nbytes is guest controlled and used to be
+    // handed straight to reserve(), which throws for huge values.
+    const s64 pos = file->Tell();
+    const u64 size = file->GetSize();
+    const u64 remaining = (pos >= 0 && size > static_cast<u64>(pos)) ? size - pos : 0;
+    nbytes = std::min<u64>(nbytes, remaining);
+    memory->InvalidateMemory(reinterpret_cast<VAddr>(buf), nbytes);
+    if (nbytes == 0) {
+        return 0;
+    }
+    if (file_buf.size() < nbytes) {
+        file_buf.resize(nbytes);
     }
     s64 bytes = file->Read(file_buf.data(), nbytes);
     if (bytes < 0) {
@@ -574,11 +597,11 @@ s64 PS4_SYSV_ABI sceKernelRead(s32 fd, void* buf, u64 nbytes) {
 }
 
 s32 PS4_SYSV_ABI posix_mkdir(const char* path, u16 mode) {
-    LOG_INFO(Kernel_Fs, "path = {} mode = {:#o}", path, mode);
-    if (strlen(path) > 255) {
-        *__Error() = POSIX_ENAMETOOLONG;
+    if (const s32 err = CheckGuestPath(path)) {
+        *__Error() = err;
         return -1;
     }
+    LOG_INFO(Kernel_Fs, "path = {} mode = {:#o}", path, mode);
     if (path == nullptr) {
         *__Error() = POSIX_ENOTDIR;
         return -1;
@@ -622,8 +645,8 @@ s32 PS4_SYSV_ABI sceKernelMkdir(const char* path, u16 mode) {
 }
 
 s32 PS4_SYSV_ABI posix_rmdir(const char* path) {
-    if (strlen(path) > 255) {
-        *__Error() = POSIX_ENAMETOOLONG;
+    if (const s32 err = CheckGuestPath(path)) {
+        *__Error() = err;
         return -1;
     }
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
@@ -666,11 +689,11 @@ s32 PS4_SYSV_ABI sceKernelRmdir(const char* path) {
 }
 
 s32 PS4_SYSV_ABI posix_access(const char* path, s32 mode) {
-    LOG_INFO(Kernel_Fs, "(PARTIAL) path = {}, mode = {}", path, mode);
-    if (strlen(path) > 255) {
-        *__Error() = POSIX_ENAMETOOLONG;
+    if (const s32 err = CheckGuestPath(path)) {
+        *__Error() = err;
         return -1;
     }
+    LOG_INFO(Kernel_Fs, "(PARTIAL) path = {}, mode = {}", path, mode);
 
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
     const bool is_dir = mnt->IsDirectory(path);
@@ -687,9 +710,13 @@ s32 PS4_SYSV_ABI posix_access(const char* path, s32 mode) {
 }
 
 s32 PS4_SYSV_ABI posix_stat(const char* path, OrbisKernelStat* sb) {
+    if (const s32 err = CheckGuestPath(path)) {
+        *__Error() = err;
+        return -1;
+    }
     LOG_DEBUG(Kernel_Fs, "(PARTIAL) path = {}", path);
-    if (strlen(path) > 255) {
-        *__Error() = POSIX_ENAMETOOLONG;
+    if (sb == nullptr) {
+        *__Error() = POSIX_EFAULT;
         return -1;
     }
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
@@ -772,7 +799,10 @@ s32 PS4_SYSV_ABI sceKernelStat(const char* path, OrbisKernelStat* sb) {
 }
 
 s32 PS4_SYSV_ABI sceKernelCheckReachability(const char* path) {
-    if (strlen(path) > 255) {
+    if (path == nullptr) {
+        return ORBIS_KERNEL_ERROR_EFAULT;
+    }
+    if (strnlen(path, 256) > 255) {
         return ORBIS_KERNEL_ERROR_ENAMETOOLONG;
     }
 
@@ -909,17 +939,17 @@ s32 PS4_SYSV_ABI sceKernelFtruncate(s32 fd, s64 length) {
 }
 
 s32 PS4_SYSV_ABI posix_rename(const char* from, const char* to) {
+    if (const s32 err = CheckGuestPath(from)) {
+        *__Error() = err;
+        return -1;
+    }
+    if (const s32 err = CheckGuestPath(to)) {
+        *__Error() = err;
+        return -1;
+    }
     auto* mnt = Common::Singleton<Core::FileSys::MntPoints>::Instance();
     bool ro = false;
     const auto src_path = mnt->GetHostPath(from, &ro);
-    if (strlen(from) > 255) {
-        *__Error() = POSIX_ENAMETOOLONG;
-        return -1;
-    }
-    if (strlen(to) > 255) {
-        *__Error() = POSIX_ENAMETOOLONG;
-        return -1;
-    }
     if (!fs::exists(src_path)) {
         *__Error() = POSIX_ENOENT;
         return -1;
@@ -1220,8 +1250,8 @@ s64 PS4_SYSV_ABI sceKernelPwritev(s32 fd, const OrbisKernelIovec* iov, s32 iovcn
 }
 
 s32 PS4_SYSV_ABI posix_unlink(const char* path) {
-    if (strlen(path) > 255) {
-        *__Error() = POSIX_ENAMETOOLONG;
+    if (const s32 err = CheckGuestPath(path)) {
+        *__Error() = err;
         return -1;
     }
     if (path == nullptr) {
