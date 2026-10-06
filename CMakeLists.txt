@@ -1032,6 +1032,7 @@ set(SHADER_RECOMPILER src/shader_recompiler/profile.h
                       src/shader_recompiler/frontend/copy_shader.h
                       src/shader_recompiler/frontend/decode.cpp
                       src/shader_recompiler/frontend/decode.h
+                      src/shader_recompiler/frontend/code_slice.h
                       src/shader_recompiler/frontend/fetch_shader.cpp
                       src/shader_recompiler/frontend/fetch_shader.h
                       src/shader_recompiler/frontend/format.cpp

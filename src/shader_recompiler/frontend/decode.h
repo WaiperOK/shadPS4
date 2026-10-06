@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "shader_recompiler/frontend/code_slice.h"
 #include "shader_recompiler/frontend/instruction.h"
 
 namespace Shader::Gcn {
@@ -23,35 +24,6 @@ u32 GetEncodingLength(InstEncoding encoding);
 InstFormat InstructionFormat(InstEncoding encoding, u32 opcode);
 
 Opcode DecodeOpcode(u32 token);
-
-class GcnCodeSlice {
-public:
-    GcnCodeSlice(const u32* ptr, const u32* end) : m_ptr(ptr), m_end(end) {}
-    GcnCodeSlice(const GcnCodeSlice& other) = default;
-    ~GcnCodeSlice() = default;
-
-    u32 at(u32 id) const {
-        return m_ptr[id];
-    }
-
-    u32 readu32() {
-        return *(m_ptr++);
-    }
-
-    u64 readu64() {
-        const u64 value = *(u64*)m_ptr;
-        m_ptr += 2;
-        return value;
-    }
-
-    bool atEnd() const {
-        return m_ptr == m_end;
-    }
-
-private:
-    const u32* m_ptr{};
-    const u32* m_end{};
-};
 
 class GcnDecodeContext {
 public:

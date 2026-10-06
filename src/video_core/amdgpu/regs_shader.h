@@ -223,14 +223,22 @@ struct ComputeProgram {
 
 static constexpr const BinaryInfo& SearchBinaryInfo(const u32* code) {
     constexpr u32 token_mov_vcchi = 0xBEEB03FF;
+    constexpr u32 search_limit = 0x4000;
     if (code[0] == token_mov_vcchi) {
-        const auto* info = std::bit_cast<const BinaryInfo*>(code + (code[1] + 1) * 2);
-        if (info->Valid()) {
-            return *info;
+        // code[1] is read from the shader itself. The binary info is at most one shader (the
+        // length field is 24 bits, 16 MiB) away, so anything further is a bogus value; following
+        // it unchecked made us read the header from an arbitrary address (the 32 bit
+        // (code[1] + 1) * 2 also wrapped around).
+        constexpr u64 max_offset_dw = (u64{1} << 24) / sizeof(u32);
+        const u64 offset = (u64{code[1]} + 1) * 2;
+        if (offset <= max_offset_dw) {
+            const auto* info = std::bit_cast<const BinaryInfo*>(code + offset);
+            if (info->Valid()) {
+                return *info;
+            }
         }
     }
     constexpr u32 signature_size = sizeof(BinaryInfo::signature_ref) / sizeof(u8);
-    constexpr u32 search_limit = 0x4000;
     const u32* end = code + search_limit;
     for (const u32* it = code; it < end; ++it) {
         if (const BinaryInfo* info = std::bit_cast<const BinaryInfo*>(it); info->Valid()) {

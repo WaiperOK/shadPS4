@@ -92,6 +92,7 @@ set(GCN_TEST_SOURCES
     ${CMAKE_SOURCE_DIR}/src/shader_recompiler/backend/spirv/spirv_emit_context.h
     ${CMAKE_SOURCE_DIR}/src/shader_recompiler/frontend/format.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_recompiler/frontend/decode.cpp
+    ${CMAKE_SOURCE_DIR}/src/shader_recompiler/frontend/code_slice.h
     ${CMAKE_SOURCE_DIR}/src/shader_recompiler/frontend/decode.h
     ${CMAKE_SOURCE_DIR}/src/shader_recompiler/frontend/fetch_shader.cpp
     ${CMAKE_SOURCE_DIR}/src/shader_recompiler/frontend/fetch_shader.h
@@ -377,6 +378,7 @@ set(PARSER_TEST_SOURCES
     # Tests
     file_format/test_parsers.cpp
     file_sys/test_guest_path.cpp
+    shader/test_code_slice.cpp
 )
 
 add_executable(shadps4_parser_test ${PARSER_TEST_SOURCES})
