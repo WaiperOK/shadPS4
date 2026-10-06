@@ -374,7 +374,10 @@ private:
     static u32 GetLE32(const u8* p);
     static u64 GetLE64(const u8* p);
 
-    ShadSocketHandle m_sock = SHAD_INVALID_SOCK;
+    // Shared by the connect, reader and writer threads and by Stop(): atomic so that closing it
+    // on one thread is seen by the others instead of racing with a recv()/send() on a handle
+    // that may already have been reused by the OS.
+    std::atomic<ShadSocketHandle> m_sock{SHAD_INVALID_SOCK};
     std::string m_host;
     u16 m_port = 31313;
     std::string m_npid;

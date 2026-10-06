@@ -441,14 +441,16 @@ bool ShadNetClient::DoConnect() {
 }
 
 void ShadNetClient::DoDisconnect() {
-    if (m_sock != SHAD_INVALID_SOCK) {
+    // exchange() hands the handle to exactly one caller, so two threads disconnecting at the same
+    // time (Stop() and a failed login on the reader thread) cannot close it twice.
+    const ShadSocketHandle sock = m_sock.exchange(SHAD_INVALID_SOCK);
+    if (sock != SHAD_INVALID_SOCK) {
 #ifdef _WIN32
-        ::shutdown(m_sock, SD_BOTH);
+        ::shutdown(sock, SD_BOTH);
 #else
-        ::shutdown(m_sock, SHUT_RDWR);
+        ::shutdown(sock, SHUT_RDWR);
 #endif
-        SHAD_CLOSE(m_sock);
-        m_sock = SHAD_INVALID_SOCK;
+        SHAD_CLOSE(sock);
     }
 }
 
@@ -495,6 +497,13 @@ std::vector<u8> ShadNetClient::BuildPacket(CommandType cmd, u64 id,
 }
 
 u64 ShadNetClient::SubmitRequest(CommandType cmd, const std::vector<u8>& payload) {
+    // The server drops (or disconnects on) packets above SHAD_MAX_PACKET_SIZE, so do not queue
+    // something that cannot be delivered and would only sit in the send queue.
+    if (SHAD_HEADER_SIZE + payload.size() > SHAD_MAX_PACKET_SIZE) {
+        LOG_ERROR(ShadNet, "Request cmd={} too large ({} bytes), not sent", static_cast<u16>(cmd),
+                  payload.size());
+        return 0;
+    }
     const u64 pkt_id = m_pkt_counter.fetch_add(1);
     auto pkt = BuildPacket(cmd, pkt_id, payload);
     {
