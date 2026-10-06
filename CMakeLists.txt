@@ -907,6 +907,8 @@ set(CORE src/core/aerolib/stubs.cpp
          src/core/file_format/npbind.h
          src/core/file_sys/fs.cpp
          src/core/file_sys/fs.h
+         src/core/file_sys/guest_path.cpp
+         src/core/file_sys/guest_path.h
          src/core/file_sys/ifile.cpp
          src/core/file_sys/ifile.h
          src/core/file_sys/backends/host_fs.cpp

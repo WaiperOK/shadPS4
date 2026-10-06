@@ -11,6 +11,7 @@
 #include "core/file_sys/devices/logger.h"
 #include "core/file_sys/devices/nop_device.h"
 #include "core/file_sys/fs.h"
+#include "core/file_sys/guest_path.h"
 
 namespace Core::FileSys {
 
@@ -160,16 +161,11 @@ void MntPoints::UnmountAll() {
 
 std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_read_only,
                                              HostPathType path_type) {
-    // Evil games like Turok2 pass double slashes e.g /app0//game.kpf
-    std::string corrected_path(path);
-    size_t pos = corrected_path.find("//");
-    while (pos != std::string::npos) {
-        corrected_path.replace(pos, 2, "/");
-        pos = corrected_path.find("//", pos + 1);
-    }
-
-    if (path.length() > 255)
+    const auto sanitized = SanitizeGuestPath(path);
+    if (!sanitized) {
         return "";
+    }
+    const std::string& corrected_path = *sanitized;
 
     const auto* mount = GetMount(corrected_path);
     if (!mount) {
@@ -315,20 +311,6 @@ std::filesystem::path MntPoints::GetHostPath(std::string_view path, bool* is_rea
     // Opening the guest path will surely fail but at least gives
     // a better error message than the empty path.
     return host_path;
-}
-
-// Normalize a guest path
-std::optional<std::string> SanitizeGuestPath(std::string_view path) {
-    if (path.length() > 255) {
-        return std::nullopt;
-    }
-    std::string corrected(path);
-    size_t pos = corrected.find("//");
-    while (pos != std::string::npos) {
-        corrected.replace(pos, 2, "/");
-        pos = corrected.find("//", pos + 1);
-    }
-    return corrected;
 }
 
 // Strip the mount prefix from a corrected guest path

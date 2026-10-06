@@ -340,3 +340,27 @@ gtest_discover_tests(shadps4_http_test
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DISCOVERY_TIMEOUT 60
 )
+
+# ===========================================================================
+# Guest path tests (SanitizeGuestPath)
+# ===========================================================================
+# The code under test has no dependencies, so this target only needs GoogleTest.
+
+add_executable(shadps4_guest_path_test
+    ${CMAKE_SOURCE_DIR}/src/core/file_sys/guest_path.cpp
+    file_sys/test_guest_path.cpp
+)
+
+list(APPEND TEST_TARGETS shadps4_guest_path_test)
+
+target_include_directories(shadps4_guest_path_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_features(shadps4_guest_path_test PRIVATE cxx_std_23)
+target_link_libraries(shadps4_guest_path_test PRIVATE GTest::gtest_main)
+
+gtest_discover_tests(shadps4_guest_path_test
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DISCOVERY_TIMEOUT 60
+)
