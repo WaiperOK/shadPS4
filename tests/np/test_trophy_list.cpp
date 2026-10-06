@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <filesystem>
+#include <fstream>
+
 #include <gtest/gtest.h>
 
 #include "core/libraries/np/trophy_list.h"
@@ -175,4 +178,79 @@ TEST(TrophyList, ActiveSourceRoundTrips) {
     EXPECT_TRUE(source.valid());
     EXPECT_EQ(source.progress_xml, "progress.xml");
     SetActiveSource({});
+}
+
+namespace {
+
+// Builds <root>/<id>/Xml/TROP.XML and <progress>/<id>.xml on disk.
+class ScanFixture : public ::testing::Test {
+protected:
+    void SetUp() override {
+        root = std::filesystem::temp_directory_path() /
+               ("shadps4_trophy_scan_" + std::to_string(reinterpret_cast<uintptr_t>(this)));
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root / "trophy_root");
+        std::filesystem::create_directories(root / "progress");
+    }
+    void TearDown() override {
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+    void Title(const std::string& id, const std::string& name, std::string_view progress) {
+        const auto xml_dir = root / "trophy_root" / id / "Xml";
+        std::filesystem::create_directories(xml_dir);
+        std::ofstream(xml_dir / "TROP.XML")
+            << "<trophyconf><title-name>" << name << "</title-name>"
+            << R"(<trophy id="0" ttype="B"><name>a</name><detail>b</detail></trophy>
+                  <trophy id="1" ttype="G"><name>c</name><detail>d</detail></trophy></trophyconf>)";
+        if (!progress.empty()) {
+            std::ofstream(root / "progress" / (id + ".xml")) << progress;
+        }
+    }
+    std::vector<TitleProgress> Scan() {
+        return ScanTitles(root / "trophy_root", root / "progress");
+    }
+    std::filesystem::path root;
+};
+
+} // namespace
+
+TEST_F(ScanFixture, ListsTitlesByRecentActivityThenName) {
+    Title("NPWR00001_00", "Zebra Game",
+          R"(<trophyconf><trophy id="0" unlockstate="true" timestamp="1000"/></trophyconf>)");
+    Title("NPWR00002_00", "Alpha Game",
+          R"(<trophyconf><trophy id="0" unlockstate="true" timestamp="2000"/>
+             <trophy id="1" unlockstate="true" timestamp="3000"/></trophyconf>)");
+    Title("NPWR00003_00", "Beta Game", "");
+    Title("NPWR00004_00", "Aardvark Game", "");
+
+    const auto titles = Scan();
+    ASSERT_EQ(titles.size(), 4u);
+    EXPECT_EQ(titles[0].title, "Alpha Game"); // earned most recently
+    EXPECT_EQ(titles[0].last_earned, 3000u);
+    EXPECT_EQ(titles[0].summary.unlocked, 2u);
+    EXPECT_EQ(titles[0].summary.Percent(), 100u);
+    EXPECT_EQ(titles[1].title, "Zebra Game");
+    EXPECT_EQ(titles[1].summary.Percent(), 50u);
+    EXPECT_EQ(titles[2].title, "Aardvark Game"); // no activity: by name
+    EXPECT_EQ(titles[3].title, "Beta Game");
+    EXPECT_EQ(titles[3].last_earned, 0u);
+    EXPECT_EQ(titles[0].id, "NPWR00002_00");
+    EXPECT_TRUE(titles[0].source.valid());
+}
+
+TEST_F(ScanFixture, SkipsFoldersWithoutUsableTrophyData) {
+    Title("NPWR00001_00", "Good", "");
+    std::filesystem::create_directories(root / "trophy_root" / "NPWR_EMPTY");
+    std::filesystem::create_directories(root / "trophy_root" / "NPWR_BROKEN" / "Xml");
+    std::ofstream(root / "trophy_root" / "NPWR_BROKEN" / "Xml" / "TROP.XML") << "<<< not xml";
+    std::ofstream(root / "trophy_root" / "stray_file.txt") << "x";
+
+    const auto titles = Scan();
+    ASSERT_EQ(titles.size(), 1u);
+    EXPECT_EQ(titles[0].title, "Good");
+}
+
+TEST_F(ScanFixture, MissingRootGivesAnEmptyList) {
+    EXPECT_TRUE(ScanTitles(root / "does_not_exist", root / "progress").empty());
 }

@@ -218,6 +218,44 @@ std::string FormatTimestampUtc(u64 seconds) {
     return buffer;
 }
 
+std::vector<TitleProgress> ScanTitles(const std::filesystem::path& trophy_root,
+                                      const std::filesystem::path& progress_dir) {
+    std::vector<TitleProgress> titles;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(trophy_root, ec), end; !ec && it != end;
+         it.increment(ec)) {
+        std::error_code entry_ec;
+        if (!it->is_directory(entry_ec) || entry_ec) {
+            continue;
+        }
+        TitleProgress title;
+        title.id = it->path().filename().string();
+        title.source.definition_xml = it->path() / "Xml" / "TROP.XML";
+        title.source.progress_xml = progress_dir / (title.id + ".xml");
+
+        List list;
+        if (!Load(title.source.definition_xml, title.source.progress_xml, list)) {
+            continue;
+        }
+        title.title = list.title.empty() ? title.id : list.title;
+        title.summary = Summarize(list);
+        for (const Entry& entry : list.entries) {
+            if (entry.unlocked) {
+                title.last_earned = std::max(title.last_earned, entry.timestamp);
+            }
+        }
+        titles.push_back(std::move(title));
+    }
+
+    std::sort(titles.begin(), titles.end(), [](const TitleProgress& a, const TitleProgress& b) {
+        if (a.last_earned != b.last_earned) {
+            return a.last_earned > b.last_earned;
+        }
+        return a.title < b.title;
+    });
+    return titles;
+}
+
 void SetActiveSource(Source source) {
     std::lock_guard lock{g_source_mutex};
     g_source = std::move(source);

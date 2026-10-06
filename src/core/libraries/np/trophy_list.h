@@ -81,8 +81,7 @@ bool Matches(const Entry& entry, const Filter& filter);
 // "YYYY-MM-DD HH:MM UTC" for a Unix time in seconds.
 std::string FormatTimestampUtc(u64 seconds);
 
-// The trophy files of the running title. libSceNpTrophy sets them when the title registers its
-// trophy set; the overlay reads them. Safe to call from any thread.
+// Where the trophy files of a title are.
 struct Source {
     std::filesystem::path definition_xml;
     std::filesystem::path progress_xml;
@@ -90,6 +89,24 @@ struct Source {
         return !definition_xml.empty();
     }
 };
+
+// A title seen in the trophy directory, as shown in the "all games" view.
+struct TitleProgress {
+    std::string id; // NP communication id, the name of its folder
+    std::string title;
+    Summary summary;
+    u64 last_earned = 0; // Unix time of the most recent unlock, 0 when nothing is earned
+    Source source;
+};
+
+// Lists every title that has trophy data: `trophy_root` holds one folder per title with
+// Xml/TROP.XML inside, and `progress_dir` holds the per user progress files <id>.xml.
+// Titles with recent activity come first, then by name. Unreadable titles are skipped.
+std::vector<TitleProgress> ScanTitles(const std::filesystem::path& trophy_root,
+                                      const std::filesystem::path& progress_dir);
+
+// The trophy files of the running title. libSceNpTrophy sets them when the title registers its
+// trophy set; the overlay reads them. Safe to call from any thread.
 void SetActiveSource(Source source);
 Source GetActiveSource();
 

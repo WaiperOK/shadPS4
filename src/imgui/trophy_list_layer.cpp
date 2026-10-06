@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
-#include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <imgui.h>
 
+#include "common/path_util.h"
+#include "core/emulator_settings.h"
 #include "core/libraries/np/trophy_list.h"
 #include "imgui/imgui_layer.h"
 #include "imgui/trophy_list_layer.h"
@@ -22,6 +25,8 @@ namespace {
 bool g_open = false;
 
 struct State {
+    // What the "Trophies" tab shows: the running title, or a title picked in "All games".
+    std::optional<TL::Source> picked;
     TL::Source source;
     TL::List list;
     TL::Filter filter;
@@ -29,6 +34,13 @@ struct State {
     bool loaded = false;
     std::filesystem::file_time_type progress_time{};
     double last_check = 0.0;
+
+    // "All games" tab.
+    std::vector<TL::TitleProgress> titles;
+    bool titles_loaded = false;
+    std::string picked_title;
+
+    int select_tab = -1; // 0 = Trophies, 1 = All games, applied on the next frame
 };
 State g_state;
 
@@ -63,10 +75,10 @@ void Reload() {
     g_state.progress_time = ProgressTime(g_state.source);
 }
 
-// Reloads when the title registered another trophy set, when the progress file changed (a trophy
-// was unlocked while the window is open) or when asked to.
+// Reloads when the shown title changed, when its progress file changed (a trophy was unlocked
+// while the window is open) or when asked to.
 void Refresh(bool force) {
-    const TL::Source source = TL::GetActiveSource();
+    const TL::Source source = g_state.picked.value_or(TL::GetActiveSource());
     const bool changed = source.definition_xml != g_state.source.definition_xml ||
                          source.progress_xml != g_state.source.progress_xml;
     g_state.source = source;
@@ -87,6 +99,21 @@ void Refresh(bool force) {
             Reload();
         }
     }
+}
+
+// Progress files of the user that is playing; before any title registered, the first user.
+std::filesystem::path ProgressDir() {
+    const TL::Source active = TL::GetActiveSource();
+    if (active.valid() && active.progress_xml.has_parent_path()) {
+        return active.progress_xml.parent_path();
+    }
+    return EmulatorSettings.GetHomeDir() / "1" / "trophy";
+}
+
+void ScanTitles() {
+    g_state.titles =
+        TL::ScanTitles(Common::FS::GetUserPath(Common::FS::PathType::TrophyDir), ProgressDir());
+    g_state.titles_loaded = true;
 }
 
 void DrawSummary(const TL::Summary& summary) {
@@ -178,6 +205,96 @@ void DrawTable() {
     ImGui::EndTable();
 }
 
+void DrawGameTab() {
+    Refresh(false);
+    if (g_state.picked) {
+        ImGui::TextDisabled("Viewing a title picked in \"All games\"");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Back to the running game")) {
+            g_state.picked.reset();
+            g_state.picked_title.clear();
+            Refresh(true);
+        }
+    }
+
+    if (!g_state.source.valid()) {
+        ImGui::TextWrapped("No trophy set is registered yet. The list is available once the game "
+                           "has initialised its trophy support. Titles you played before are "
+                           "listed under \"All games\".");
+        return;
+    }
+    if (!g_state.loaded) {
+        ImGui::TextWrapped("The trophy data could not be read:\n%s",
+                           g_state.source.definition_xml.string().c_str());
+        return;
+    }
+    if (!g_state.list.title.empty()) {
+        TextView(g_state.list.title);
+    }
+    DrawSummary(TL::Summarize(g_state.list));
+    ImGui::Separator();
+    DrawFilters();
+    ImGui::Separator();
+    DrawTable();
+}
+
+void DrawAllGamesTab() {
+    if (!g_state.titles_loaded) {
+        ScanTitles();
+    }
+    if (ImGui::Button("Refresh##all_games")) {
+        ScanTitles();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu titles", g_state.titles.size());
+
+    if (g_state.titles.empty()) {
+        ImGui::TextWrapped("No trophy data found yet. Trophies of a title are listed here after "
+                           "it has been started once.");
+        return;
+    }
+
+    constexpr ImGuiTableFlags flags =
+        ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV;
+    if (!ImGui::BeginTable("##titles_table", 3, flags, ImVec2(0.0f, 0.0f))) {
+        return;
+    }
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn("Title", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("Progress", ImGuiTableColumnFlags_WidthFixed, 200.0f);
+    ImGui::TableSetupColumn("Last earned", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+    ImGui::TableHeadersRow();
+
+    for (const TL::TitleProgress& title : g_state.titles) {
+        ImGui::TableNextRow();
+        ImGui::PushID(title.id.c_str());
+
+        ImGui::TableSetColumnIndex(0);
+        if (ImGui::Selectable(title.title.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+            g_state.picked = title.source;
+            g_state.picked_title = title.title;
+            g_state.select_tab = 0;
+            Refresh(true);
+        }
+
+        ImGui::TableSetColumnIndex(1);
+        char overlay[48];
+        std::snprintf(overlay, sizeof(overlay), "%u/%u (%u%%)", title.summary.unlocked,
+                      title.summary.total, title.summary.Percent());
+        ImGui::ProgressBar(static_cast<float>(title.summary.Percent()) / 100.0f,
+                           ImVec2(-1.0f, 0.0f), overlay);
+
+        ImGui::TableSetColumnIndex(2);
+        if (title.last_earned != 0) {
+            TextView(TL::FormatTimestampUtc(title.last_earned));
+        } else {
+            ImGui::TextDisabled("-");
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+}
+
 class TrophyListLayer final : public ImGui::Layer {
 public:
     void Draw() override;
@@ -198,22 +315,21 @@ void TrophyListLayer::Draw() {
         return;
     }
 
-    Refresh(false);
-    if (!g_state.source.valid()) {
-        ImGui::TextWrapped("No trophy set is registered yet. The list is available once the game "
-                           "has initialised its trophy support.");
-    } else if (!g_state.loaded) {
-        ImGui::TextWrapped("The trophy data could not be read:\n%s",
-                           g_state.source.definition_xml.string().c_str());
-    } else {
-        if (!g_state.list.title.empty()) {
-            TextView(g_state.list.title);
+    if (ImGui::BeginTabBar("##trophy_tabs")) {
+        const auto tab_flags = [](int index) {
+            return g_state.select_tab == index ? ImGuiTabItemFlags_SetSelected
+                                               : ImGuiTabItemFlags_None;
+        };
+        if (ImGui::BeginTabItem("Trophies", nullptr, tab_flags(0))) {
+            DrawGameTab();
+            ImGui::EndTabItem();
         }
-        DrawSummary(TL::Summarize(g_state.list));
-        ImGui::Separator();
-        DrawFilters();
-        ImGui::Separator();
-        DrawTable();
+        if (ImGui::BeginTabItem("All games", nullptr, tab_flags(1))) {
+            DrawAllGamesTab();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+        g_state.select_tab = -1;
     }
     ImGui::End();
 }
@@ -231,6 +347,10 @@ void Toggle() {
 }
 void Open() {
     g_open = true;
+    // A title asked for its trophies: show the running game, not an earlier pick.
+    g_state.picked.reset();
+    g_state.picked_title.clear();
+    g_state.select_tab = 0;
 }
 bool IsOpen() {
     return g_open;
