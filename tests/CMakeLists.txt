@@ -340,3 +340,94 @@ gtest_discover_tests(shadps4_http_test
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DISCOVERY_TIMEOUT 60
 )
+
+# ===========================================================================
+# Parser and guest path tests (PSF, NPBIND, PlayGo, SanitizeGuestPath)
+# ===========================================================================
+# Self-contained block, same structure as the HTTP tests above.
+
+set(PARSER_TEST_SOURCES
+    # Under test
+    ${CMAKE_SOURCE_DIR}/src/core/file_format/psf.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/file_format/npbind.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/file_format/playgo_chunk.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/file_sys/guest_path.cpp
+    # Required by the logger's access to EmulatorSettings.
+    ${CMAKE_SOURCE_DIR}/src/core/emulator_settings.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/emulator_state.cpp
+
+    # Minimal common support
+    ${CMAKE_SOURCE_DIR}/src/common/path_util.cpp
+    ${CMAKE_SOURCE_DIR}/src/common/assert.cpp
+    ${CMAKE_SOURCE_DIR}/src/common/error.cpp
+    ${CMAKE_SOURCE_DIR}/src/common/io_file.cpp
+    ${CMAKE_SOURCE_DIR}/src/common/string_util.cpp
+    ${CMAKE_SOURCE_DIR}/src/common/logging/classes.cpp
+    ${CMAKE_SOURCE_DIR}/src/common/logging/log.cpp
+    ${CMAKE_SOURCE_DIR}/src/common/ntapi.cpp
+
+    # Stubs that replace dependencies
+    stubs/common_stub.cpp
+    stubs/scm_rev_stub.cpp
+    stubs/sdl_stub.cpp
+    stubs/core_stub.cpp
+    stubs/signals_stub.cpp
+    stubs/file_sys_stub.cpp
+
+    # Tests
+    file_format/test_parsers.cpp
+    file_sys/test_guest_path.cpp
+)
+
+add_executable(shadps4_parser_test ${PARSER_TEST_SOURCES})
+
+list(APPEND TEST_TARGETS shadps4_parser_test)
+
+target_include_directories(shadps4_parser_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_features(shadps4_parser_test PRIVATE cxx_std_23)
+target_compile_definitions(shadps4_parser_test PRIVATE BOOST_ASIO_STANDALONE)
+
+target_link_libraries(shadps4_parser_test PRIVATE
+    GTest::gtest_main
+    fmt::fmt
+    nlohmann_json::nlohmann_json
+    toml11::toml11
+    SDL3::SDL3
+    spdlog::spdlog
+)
+
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR
+    CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    include(CheckCXXSymbolExists)
+    check_cxx_symbol_exists(_LIBCPP_VERSION version LIBCPP)
+    if (LIBCPP)
+        target_compile_options(shadps4_parser_test PRIVATE -fexperimental-library)
+    endif()
+endif()
+
+if (WIN32)
+    target_link_libraries(shadps4_parser_test PRIVATE onecore)
+    target_compile_definitions(shadps4_parser_test PRIVATE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        NTDDI_VERSION=0x0A000006
+        _WIN32_WINNT=0x0A00
+        WINVER=0x0A00
+    )
+    if (MSVC)
+        target_compile_definitions(shadps4_parser_test PRIVATE
+            _CRT_SECURE_NO_WARNINGS
+            _CRT_NONSTDC_NO_DEPRECATE
+            _SCL_SECURE_NO_WARNINGS
+            _TIMESPEC_DEFINED
+        )
+    endif()
+endif()
+
+gtest_discover_tests(shadps4_parser_test
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DISCOVERY_TIMEOUT 60
+)

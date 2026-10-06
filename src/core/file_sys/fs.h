@@ -41,10 +41,6 @@ inline constexpr bool NeedsCaseInsensitiveSearch = false;
 inline constexpr bool NeedsCaseInsensitiveSearch = true;
 #endif
 
-// Normalizes a guest path (repeated slashes, "." and ".." components). Returns nullopt when the
-// path is too long, contains characters that are unsafe on the host, or escapes the root.
-std::optional<std::string> SanitizeGuestPath(std::string_view path);
-
 class MntPoints {
 public:
     static bool ignore_game_patches;
