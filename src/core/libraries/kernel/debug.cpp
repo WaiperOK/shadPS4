@@ -9,6 +9,9 @@
 namespace Libraries::Kernel {
 
 void PS4_SYSV_ABI sceKernelDebugOutText(void* unk, char* text) {
+    if (text == nullptr) {
+        return;
+    }
     sceKernelWrite(1, text, strlen(text));
     return;
 }
