@@ -15,9 +15,11 @@
 #include "core/libraries/np/np_error.h"
 #include "core/libraries/np/np_handler.h"
 #include "core/libraries/np/np_trophy.h"
+#include "core/libraries/np/trophy_list.h"
 #include "core/libraries/np/trophy_ui.h"
 #include "core/libraries/system/userservice.h"
 #include "core/memory.h"
+#include "imgui/trophy_list_layer.h"
 
 namespace Libraries::Np::NpTrophy {
 
@@ -927,6 +929,8 @@ int PS4_SYSV_ABI sceNpTrophyRegisterContext(OrbisNpTrophyContext context,
     ctx.registered = true;
     LOG_INFO(Lib_NpTrophy, "Context {} registered", context);
 
+    TrophyList::SetActiveSource({ctx.trophy_xml_path, ctx.xml_save_file});
+
     // Sync with shadNet
     {
         const auto save_file = ctx.xml_save_file;
@@ -1209,7 +1213,33 @@ int PS4_SYSV_ABI sceNpTrophySetInfoGetTrophyNum() {
 
 int PS4_SYSV_ABI sceNpTrophyShowTrophyList(OrbisNpTrophyContext context,
                                            OrbisNpTrophyHandle handle) {
-    LOG_ERROR(Lib_NpTrophy, "(STUBBED) called");
+    LOG_INFO(Lib_NpTrophy, "called");
+
+    if (context == ORBIS_NP_TROPHY_INVALID_CONTEXT)
+        return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+
+    if (handle == ORBIS_NP_TROPHY_INVALID_HANDLE)
+        return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+
+    Common::SlotId contextId;
+    contextId.index = context - 1;
+    if (contextId.index >= trophy_contexts.Size() || !trophy_contexts.IsAllocated(contextId)) {
+        return ORBIS_NP_TROPHY_ERROR_INVALID_CONTEXT;
+    }
+
+    s32 handle_index = handle - 1;
+    if (handle_index >= trophy_handles.Size() ||
+        !trophy_handles.IsAllocated({static_cast<u32>(handle_index)})) {
+        return ORBIS_NP_TROPHY_ERROR_INVALID_HANDLE;
+    }
+
+    ContextKey contextkey = trophy_contexts[contextId];
+    const auto& ctx = contexts_internal[contextkey];
+    if (!ctx.registered)
+        return ORBIS_NP_TROPHY_ERROR_NOT_REGISTERED;
+
+    TrophyList::SetActiveSource({ctx.trophy_xml_path, ctx.xml_save_file});
+    ImGui::Trophies::Open();
     return ORBIS_OK;
 }
 
