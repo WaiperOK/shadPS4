@@ -8,6 +8,7 @@
 #include "common/logging/log.h"
 #include "common/path_util.h"
 #include "core/file_format/trp.h"
+#include "core/file_format/trp_util.h"
 
 static void DecryptEFSM(std::span<const u8, 16> trophyKey, std::span<const u8, 16> NPcommID,
                         std::span<const u8, 16> efsmIv, std::span<const u8> ciphertext,
@@ -109,7 +110,14 @@ bool TRP::Extract(const std::filesystem::path& trophyPath, std::string npCommId,
                 break;
             }
 
-            std::string_view name(entry.entry_name);
+            const auto safe_name =
+                TrpUtil::GetSafeEntryName(entry.entry_name, sizeof(entry.entry_name));
+            if (!safe_name) {
+                LOG_ERROR(Common_Filesystem, "Invalid TRP entry name, aborting extraction");
+                success = false;
+                break;
+            }
+            const std::string_view name(*safe_name);
 
             if (entry.flag == ENTRY_FLAG_PNG) {
                 if (!ProcessPngEntry(file, entry, outputPath, name)) {
@@ -158,6 +166,10 @@ bool TRP::Extract(const std::filesystem::path& trophyPath, std::string npCommId,
 
 bool TRP::ProcessPngEntry(Common::FS::IOFile& file, const TrpEntry& entry,
                           const std::filesystem::path& outputPath, std::string_view name) {
+    if (!TrpUtil::IsRangeInFile(entry.entry_pos, entry.entry_len, file.GetSize())) {
+        LOG_ERROR(Common_Filesystem, "PNG entry {} lies outside of the file", name);
+        return false;
+    }
     if (!file.Seek(entry.entry_pos)) {
         LOG_ERROR(Common_Filesystem, "Failed to seek to PNG entry offset");
         return false;
@@ -186,6 +198,10 @@ bool TRP::ProcessEncryptedXmlEntry(Common::FS::IOFile& file, const TrpEntry& ent
                                    const std::string& npCommId) {
     constexpr size_t IV_LEN = 16;
 
+    if (!TrpUtil::IsRangeInFile(entry.entry_pos, entry.entry_len, file.GetSize())) {
+        LOG_ERROR(Common_Filesystem, "Encrypted XML entry {} lies outside of the file", name);
+        return false;
+    }
     if (!file.Seek(entry.entry_pos)) {
         LOG_ERROR(Common_Filesystem, "Failed to seek to encrypted XML entry offset");
         return false;
@@ -231,7 +247,7 @@ bool TRP::ProcessEncryptedXmlEntry(Common::FS::IOFile& file, const TrpEntry& ent
     removePadding(XML);
 
     // Create output filename
-    std::string xml_name(entry.entry_name);
+    std::string xml_name(name);
     size_t pos = xml_name.find("ESFM");
     if (pos != std::string::npos) {
         xml_name.replace(pos, 4, "XML");
