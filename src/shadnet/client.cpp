@@ -13,6 +13,7 @@
 #include "common/scm_rev.h"
 #include "common/thread.h"
 #include "shadnet.pb.h"
+#include "shadnet/blob.h"
 
 #ifdef _WIN32
 #pragma comment(lib, "Ws2_32.lib")
@@ -47,13 +48,9 @@ static std::vector<u8> MakeProtoPayload(const T& msg) {
 // Read a u32-LE-prefixed proto blob starting at pos in p.
 // Returns the raw bytes ready for ParseFromString.
 std::string ShadNetClient::ExtractBlob(const std::vector<u8>& p, int pos) {
-    if (pos + 4 > static_cast<int>(p.size()))
+    if (pos < 0)
         return {};
-    const u32 len = GetLE32(p.data() + pos);
-    pos += 4;
-    if (pos + static_cast<int>(len) > static_cast<int>(p.size()))
-        return {};
-    return std::string(reinterpret_cast<const char*>(p.data() + pos), len);
+    return ExtractBlobBytes(p.data(), p.size(), static_cast<size_t>(pos));
 }
 
 ShadNetClient::ShadNetClient() {
@@ -397,6 +394,12 @@ bool ShadNetClient::DoConnect() {
         return false;
     }
     const u32 total_sz = GetLE32(hdr + 3);
+    if (total_sz > SHAD_MAX_PACKET_SIZE) {
+        LOG_ERROR(ShadNet, "ServerInfo packet too large (total_sz={})", total_sz);
+        DoDisconnect();
+        m_state = ShadNetState::FailureServerInfo;
+        return false;
+    }
     const u32 payload_sz = (total_sz > SHAD_HEADER_SIZE) ? total_sz - SHAD_HEADER_SIZE : 0;
     std::vector<u8> si_payload(payload_sz);
     if (payload_sz > 0 && !RecvN(si_payload.data(), payload_sz)) {

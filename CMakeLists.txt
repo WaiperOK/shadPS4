@@ -1267,6 +1267,7 @@ add_custom_command(
 
 set(SHADNET src/shadnet/client.cpp
             src/shadnet/client.h
+            src/shadnet/blob.h
             src/shadnet/server_probe.cpp
             src/shadnet/server_probe.h
             "${SHADNET_PROTO_OUT}/shadnet.pb.cc"

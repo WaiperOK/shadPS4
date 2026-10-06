@@ -340,3 +340,24 @@ gtest_discover_tests(shadps4_http_test
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DISCOVERY_TIMEOUT 60
 )
+
+# ===========================================================================
+# shadNet blob tests (length prefixed blob extraction)
+# ===========================================================================
+# The helper is header only, so this target only needs GoogleTest.
+
+add_executable(shadps4_shadnet_blob_test shadnet/test_blob.cpp)
+
+list(APPEND TEST_TARGETS shadps4_shadnet_blob_test)
+
+target_include_directories(shadps4_shadnet_blob_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}
+)
+target_compile_features(shadps4_shadnet_blob_test PRIVATE cxx_std_23)
+target_link_libraries(shadps4_shadnet_blob_test PRIVATE GTest::gtest_main)
+
+gtest_discover_tests(shadps4_shadnet_blob_test
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DISCOVERY_TIMEOUT 60
+)
