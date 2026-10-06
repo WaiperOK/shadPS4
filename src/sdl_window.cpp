@@ -23,6 +23,7 @@
 #include "core/libraries/system/userservice.h"
 #include "core/user_settings.h"
 #include "imgui/friends_layer.h"
+#include "imgui/trophy_list_layer.h"
 #include "imgui/renderer/imgui_core.h"
 #include "input/controller.h"
 #include "input/input_handler.h"
@@ -282,6 +283,9 @@ void WindowSDL::WaitEvent() {
         break;
     case SDL_EVENT_TOGGLE_FRIENDS:
         ImGui::Friends::Toggle();
+        break;
+    case SDL_EVENT_TOGGLE_TROPHIES:
+        ImGui::Trophies::Toggle();
         break;
     case SDL_EVENT_RELOAD_INPUTS:
         Input::ParseInputConfig(std::string(Common::ElfInfo::Instance().GameSerial()));

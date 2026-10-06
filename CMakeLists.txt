@@ -653,6 +653,8 @@ set(NP_LIBS src/core/libraries/np/np_error.h
             src/core/libraries/np/np_types2.h
             src/core/libraries/np/np_trophy.cpp
             src/core/libraries/np/np_trophy.h
+            src/core/libraries/np/trophy_list.cpp
+            src/core/libraries/np/trophy_list.h
             src/core/libraries/np/trophy_ui.cpp
             src/core/libraries/np/trophy_ui.h
             src/core/libraries/np/np_party.cpp
@@ -1203,6 +1205,8 @@ set(IMGUI src/imgui/imgui_config.h
           src/imgui/imgui_translations.h
           src/imgui/friends_layer.cpp
           src/imgui/friends_layer.h
+          src/imgui/trophy_list_layer.cpp
+          src/imgui/trophy_list_layer.h
           src/imgui/invitation_prompt_layer.cpp
           src/imgui/invitation_prompt_layer.h
           src/imgui/shadnet_notifications_layer.cpp
